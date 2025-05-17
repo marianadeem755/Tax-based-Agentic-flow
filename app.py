@@ -12,10 +12,21 @@ import fitz  # PyMuPDF
 import pycountry  # for country list
 from groq import Groq
 import tempfile
+import urllib3
+import warnings
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 # Load environment variables
 load_dotenv()
+# Suppress only the specific InsecureRequestWarning when needed
+urllib3.disable_warnings(InsecureRequestWarning)
 
+# Define a warning message for users when security is reduced
+SSL_WARNING_MESSAGE = """
+⚠️ **Security Notice**: 
+To download documents from this government website, we had to use a less secure connection.
+This is safe for public documents but should not be used for sensitive information.
+"""
 # API Keys - set these in your .env file or in Hugging Face Secrets
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Using Groq as free LLM API
@@ -161,18 +172,43 @@ def analyze_search_results(results, query, country):
         return results, None
 
 # Try to download PDF
+# Enhanced fetch_pdf function with SSL error handling
 def fetch_pdf(url):
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
+        
+        # Create a session with custom SSL configuration
+        session = requests.Session()
+        
+        # For government websites that might have SSL issues, use a safer adapter
+        # that's more tolerant of SSL problems
+        retry_strategy = requests.packages.urllib3.util.retry.Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        
         st.write(f"Attempting to download PDF from: {url}")
-        r = requests.get(url, headers=headers, timeout=15)
+        
+        try:
+            # First try with normal requests - this might fail with SSL errors
+            r = session.get(url, headers=headers, timeout=15, verify=True)
+        except requests.exceptions.SSLError as ssl_err:
+            st.warning(f"SSL error encountered: {str(ssl_err)}. Trying alternative method...")
+            
+            # If SSL verification fails, try without verification (less secure but necessary for some gov sites)
+            r = session.get(url, headers=headers, timeout=15, verify=False)
+            st.warning("Connected with reduced security. This is acceptable for public government documents.")
+        
         st.write(f"Response status code: {r.status_code}")
         st.write(f"Content-Type: {r.headers.get('Content-Type', 'Not specified')}")
         
         if r.status_code == 200:
-            if 'application/pdf' in r.headers.get('Content-Type', ''):
+            if 'application/pdf' in r.headers.get('Content-Type', '').lower():
                 st.success("Successfully retrieved PDF!")
                 return BytesIO(r.content)
             else:
@@ -181,21 +217,84 @@ def fetch_pdf(url):
                 pdf_url = find_pdf_in_html_page(url, r.text)
                 if pdf_url:
                     st.info(f"Found PDF link: {pdf_url}")
-                    return fetch_pdf(pdf_url)
+                    return fetch_pdf(pdf_url)  # Recursive call to fetch the actual PDF
                 else:
                     st.warning("No PDF links found on the page")
+                    
+                    # Additional fallback: Try to detect PDF content regardless of Content-Type
+                    if r.content.startswith(b'%PDF-'):
+                        st.success("PDF content detected despite incorrect Content-Type!")
+                        return BytesIO(r.content)
         else:
             st.error(f"Failed to retrieve URL: {r.status_code}")
+            
+            # Try alternative URL construction methods if it's a government domain
+            if ".gov.pk" in url:
+                # Sometimes, government sites require different URL formats
+                alt_url = url.replace("https://", "http://")
+                st.info(f"Trying alternative URL: {alt_url}")
+                return fetch_pdf(alt_url)  # Try with HTTP instead of HTTPS
+                
         return None
+        
+    except requests.exceptions.ConnectionError as conn_err:
+        st.error(f"Connection error: {str(conn_err)}")
+        
+        # For connection errors, try an alternative protocol
+        if "https://" in url:
+            alt_url = url.replace("https://", "http://")
+            st.info(f"Trying HTTP instead of HTTPS: {alt_url}")
+            try:
+                return fetch_pdf(alt_url)
+            except Exception as alt_err:
+                st.error(f"Alternative method also failed: {str(alt_err)}")
+                return None
+        return None
+        
+    except requests.exceptions.ReadTimeout:
+        st.error("Request timed out. The server might be slow or unavailable.")
+        return None
+        
     except Exception as e:
         st.error(f"Error fetching PDF: {str(e)}")
+        
+        # Last resort - attempt with a different request method
+        if "gov.pk" in url:
+            try:
+                st.info("Trying alternative request method...")
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                http = urllib3.PoolManager(cert_reqs='CERT_NONE')
+                response = http.request('GET', url)
+                if response.status == 200:
+                    st.success("Alternative method succeeded!")
+                    return BytesIO(response.data)
+            except Exception as alt_err:
+                st.error(f"All methods failed: {str(alt_err)}")
+                
         return None
 
 # Scrape .pdf links from HTML page
+# Add these imports to handle SSL specifically
+import urllib3
+import warnings
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+# Enhanced find_pdf_in_html_page function
 def find_pdf_in_html_page(url, html_content=None):
     try:
         if not html_content:
-            r = requests.get(url, timeout=10)
+            # Create a session with relaxed SSL verification
+            session = requests.Session()
+            
+            try:
+                # First try with normal requests
+                r = session.get(url, timeout=10, verify=True)
+            except requests.exceptions.SSLError:
+                # If SSL verification fails, try without verification
+                warnings.filterwarnings('ignore', category=InsecureRequestWarning)
+                r = session.get(url, timeout=10, verify=False)
+                
             html_content = r.text
             
         soup = BeautifulSoup(html_content, "html.parser")
@@ -210,7 +309,19 @@ def find_pdf_in_html_page(url, html_content=None):
                 pdf_links.append((full_url, link.text.strip()))
                 st.write(f"Found PDF link: {full_url} - {link.text.strip()}")
         
-        st.write(f"Total PDF links found: {len(pdf_links)}")
+        # Also look for download links that might be PDFs but don't end with .pdf
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            link_text = link.text.strip().lower()
+            if (('download' in href.lower() or 'download' in link_text or 
+                'pdf' in href.lower() or 'pdf' in link_text or
+                'form' in href.lower() or 'form' in link_text) and
+                not href.lower().endswith('.pdf')):
+                full_url = href if href.startswith("http") else urljoin(url, href)
+                pdf_links.append((full_url, link.text.strip()))
+                st.write(f"Found potential PDF download link: {full_url} - {link.text.strip()}")
+        
+        st.write(f"Total potential PDF links found: {len(pdf_links)}")
         
         # First, look for links with "tax", "form", or "return" in them
         for link_url, link_text in pdf_links:

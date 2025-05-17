@@ -177,132 +177,124 @@ def analyze_search_results(results, query, country):
         st.error(f"LLM analysis failed: {str(e)}")
         return results, None
 
-# Try to download PDF
-# Enhanced fetch_pdf function with SSL error handling
+# Enhanced fetch_pdf function with multiple fallback methods for Hugging Face deployment
 def fetch_pdf(url):
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        # Create a session with custom SSL configuration
-        session = requests.Session()
-        
-        # For government websites that might have SSL issues, use a safer adapter
-        # that's more tolerant of SSL problems
-        retry_strategy = requests.packages.urllib3.util.retry.Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
-        session.mount("https://", adapter)
-        
         st.write(f"Attempting to download PDF from: {url}")
         
-        try:
-            # First try with normal requests - this might fail with SSL errors
-            r = session.get(url, headers=headers, timeout=15, verify=True)
-        except requests.exceptions.SSLError as ssl_err:
-            st.warning(f"SSL error encountered: {str(ssl_err)}. Trying alternative method...")
+        # Let's completely disable SSL verification for Pakistan government websites
+        # This is not ideal security-wise but these sites often have certificate issues
+        verify_ssl = False if (".gov.pk" in url or ".fbr.gov.pk" in url) else True
+        
+        if not verify_ssl:
+            st.warning(SSL_WARNING_MESSAGE)
+        
+        # Multiple methods to try for Pakistan government websites
+        methods_to_try = [
+            # Method 1: Try with requests - disabled SSL verification for .gov.pk
+            lambda: requests.get(url, headers=headers, timeout=30, verify=verify_ssl),
             
-            # If SSL verification fails, try without verification (less secure but necessary for some gov sites)
-            r = session.get(url, headers=headers, timeout=15, verify=False)
-            st.warning("Connected with reduced security. This is acceptable for public government documents.")
-        
-        st.write(f"Response status code: {r.status_code}")
-        st.write(f"Content-Type: {r.headers.get('Content-Type', 'Not specified')}")
-        
-        if r.status_code == 200:
-            if 'application/pdf' in r.headers.get('Content-Type', '').lower():
-                st.success("Successfully retrieved PDF!")
-                return BytesIO(r.content)
-            else:
-                st.info("URL doesn't point directly to a PDF. Searching for PDF links on the page...")
-                # Try to find PDF links if this is an HTML page
-                pdf_url = find_pdf_in_html_page(url, r.text)
-                if pdf_url:
-                    st.info(f"Found PDF link: {pdf_url}")
-                    return fetch_pdf(pdf_url)  # Recursive call to fetch the actual PDF
-                else:
-                    st.warning("No PDF links found on the page")
-                    
-                    # Additional fallback: Try to detect PDF content regardless of Content-Type
-                    if r.content.startswith(b'%PDF-'):
-                        st.success("PDF content detected despite incorrect Content-Type!")
-                        return BytesIO(r.content)
-        else:
-            st.error(f"Failed to retrieve URL: {r.status_code}")
+            # Method 2: Try with altered URL (HTTP instead of HTTPS)
+            lambda: requests.get(url.replace("https://", "http://"), headers=headers, timeout=30, verify=False) if url.startswith("https://") else None,
             
-            # Try alternative URL construction methods if it's a government domain
-            if ".gov.pk" in url:
-                # Sometimes, government sites require different URL formats
-                alt_url = url.replace("https://", "http://")
-                st.info(f"Trying alternative URL: {alt_url}")
-                return fetch_pdf(alt_url)  # Try with HTTP instead of HTTPS
-                
-        return None
+            # Method 3: Use urllib3 directly with all SSL verification disabled
+            lambda: urllib3.PoolManager(cert_reqs='CERT_NONE').request('GET', url, headers=headers, timeout=30),
+            
+            # Method 4: Try with cert verification disabled and different error handling
+            lambda: requests.get(url, headers=headers, timeout=30, verify=False)
+        ]
         
-    except requests.exceptions.ConnectionError as conn_err:
-        st.error(f"Connection error: {str(conn_err)}")
+        # Track errors for debugging
+        all_errors = []
         
-        # For connection errors, try an alternative protocol
-        if "https://" in url:
-            alt_url = url.replace("https://", "http://")
-            st.info(f"Trying HTTP instead of HTTPS: {alt_url}")
+        # Try each method until one works
+        for i, method in enumerate(methods_to_try):
             try:
-                return fetch_pdf(alt_url)
-            except Exception as alt_err:
-                st.error(f"Alternative method also failed: {str(alt_err)}")
-                return None
-        return None
+                st.write(f"Trying download method {i+1}...")
+                response = method()
+                
+                # Skip if method returned None
+                if response is None:
+                    continue
+                    
+                # Handle urllib3 Response vs requests Response
+                if hasattr(response, 'status'):  # urllib3 Response
+                    status_code = response.status
+                    content = response.data
+                    content_type = response.headers.get('Content-Type', '')
+                else:  # requests Response
+                    status_code = response.status_code
+                    content = response.content
+                    content_type = response.headers.get('Content-Type', '')
+                
+                st.write(f"Response status code: {status_code}")
+                st.write(f"Content-Type: {content_type}")
+                
+                if status_code == 200:
+                    # Check if it's a PDF regardless of content-type
+                    if content.startswith(b'%PDF-'):
+                        st.success(f"Successfully retrieved PDF using method {i+1}!")
+                        return BytesIO(content)
+                    
+                    # If response claims to be a PDF but doesn't match PDF signature
+                    elif 'application/pdf' in content_type.lower():
+                        st.success(f"Server says this is a PDF (method {i+1})")
+                        return BytesIO(content)
+                    
+                    # Try to find PDF links if this is an HTML page
+                    else:
+                        st.info(f"URL doesn't point directly to a PDF. Searching for PDF links on the page...")
+                        try:
+                            # Convert bytes to text for BeautifulSoup
+                            if isinstance(content, bytes):
+                                html_content = content.decode('utf-8', errors='ignore')
+                            else:
+                                html_content = content
+                                
+                            pdf_url = find_pdf_in_html_page(url, html_content)
+                            if pdf_url:
+                                st.info(f"Found PDF link: {pdf_url}")
+                                return fetch_pdf(pdf_url)  # Recursive call to fetch actual PDF
+                        except Exception as html_err:
+                            st.warning(f"Error parsing HTML: {str(html_err)}")
+            
+            except Exception as e:
+                all_errors.append(f"Method {i+1} error: {str(e)}")
+                st.warning(f"Method {i+1} failed: {str(e)}")
+                continue
         
-    except requests.exceptions.ReadTimeout:
-        st.error("Request timed out. The server might be slow or unavailable.")
+        # If we get here, all methods failed
+        st.error("All PDF retrieval methods failed")
+        for err in all_errors:
+            st.error(err)
+            
         return None
         
     except Exception as e:
-        st.error(f"Error fetching PDF: {str(e)}")
-        
-        # Last resort - attempt with a different request method
-        if "gov.pk" in url:
-            try:
-                st.info("Trying alternative request method...")
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                http = urllib3.PoolManager(cert_reqs='CERT_NONE')
-                response = http.request('GET', url)
-                if response.status == 200:
-                    st.success("Alternative method succeeded!")
-                    return BytesIO(response.data)
-            except Exception as alt_err:
-                st.error(f"All methods failed: {str(alt_err)}")
-                
+        st.error(f"Unexpected error in fetch_pdf: {str(e)}")
         return None
 
-# Scrape .pdf links from HTML page
-# Add these imports to handle SSL specifically
-import urllib3
-import warnings
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-
-# Enhanced find_pdf_in_html_page function
+# Enhanced find_pdf_in_html_page function with better error handling
 def find_pdf_in_html_page(url, html_content=None):
     try:
         if not html_content:
             # Create a session with relaxed SSL verification
             session = requests.Session()
             
-            try:
-                # First try with normal requests
-                r = session.get(url, timeout=10, verify=True)
-            except requests.exceptions.SSLError:
-                # If SSL verification fails, try without verification
-                warnings.filterwarnings('ignore', category=InsecureRequestWarning)
-                r = session.get(url, timeout=10, verify=False)
-                
-            html_content = r.text
+            # For .gov.pk sites, always disable SSL verification
+            verify_ssl = False if (".gov.pk" in url or ".fbr.gov.pk" in url) else True
             
+            try:
+                r = session.get(url, timeout=15, verify=verify_ssl)
+                html_content = r.text
+            except Exception as e:
+                st.warning(f"Error fetching HTML: {str(e)}")
+                return None
+                
         soup = BeautifulSoup(html_content, "html.parser")
         pdf_links = []
         
@@ -361,7 +353,6 @@ def display_pdf(file_bytesio):
     except Exception as e:
         st.error(f"Error displaying PDF: {str(e)}")
         st.info("If the PDF isn't displaying, you can try using the direct link.")
-
 
 # Extract interactive fields from PDF
 def extract_form_fields(file_bytesio):
@@ -527,7 +518,7 @@ def suggest_other_forms():
                         st.session_state.selected_pdf = idx
                         st.session_state.form_fields = extract_form_fields(pdf_bytes)
 
-# Add this new function
+# Tax agent response function
 def tax_agent_response(user_query, tax_form_type=None, form_fields=None):
     """Generate an agent-like response to user tax questions using LLM"""
     if not GROQ_API_KEY:
@@ -579,7 +570,8 @@ def tax_agent_response(user_query, tax_form_type=None, form_fields=None):
             
     except Exception as e:
         return f"I encountered an error while processing your question: {str(e)}"
-# Add this function to recommend tax form types
+
+# Recommend tax form type
 def recommend_tax_form_type(user_query):
     """Recommend appropriate tax form type based on user's situation"""
     if not GROQ_API_KEY:
@@ -618,6 +610,7 @@ def recommend_tax_form_type(user_query):
             
     except Exception as e:
         return ["Income Tax Return", "Sales Tax Return", "Withholding Tax Statement"]
+
 # Main Streamlit app
 def main():
     st.set_page_config(

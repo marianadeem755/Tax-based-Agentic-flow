@@ -12,11 +12,7 @@ import fitz  # PyMuPDF
 import pycountry  # for country list
 from groq import Groq
 import tempfile
-# Add at the top of your imports section
-import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-# Suppress only the specific InsecureRequestWarning when needed
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
 # Load environment variables
 load_dotenv()
 
@@ -85,172 +81,12 @@ def serper_search(query, country_code="pk"):
     except Exception as e:
         st.error(f"Search failed: {str(e)}")
         return []
-# Add this function to handle Pakistan-specific government website errors
-def handle_pk_gov_errors(error_type, url=""):
-    """Provides Pakistan-specific error handling and suggestions"""
-    
-    if "SSL" in str(error_type):
-        st.error("Pakistan government websites often have SSL certificate issues.")
-        st.markdown("""
-        ### How to access these forms:
-        
-        1. **Direct FBR Access**: Visit [FBR's website](https://fbr.gov.pk/downloads) and navigate to the forms section
-        
-        2. **Try these alternative official sources**:
-           - [FBR E-Services Portal](https://e.fbr.gov.pk/)
-           - [IRIS Portal](https://iris.fbr.gov.pk/)
-           - [Tax Facilitation Center](https://tfc.fbr.gov.pk/)
-        
-        3. **Common Pakistan Tax Forms**:
-           - [Income Tax Return for Salaried Individuals](https://download1.fbr.gov.pk/Docs/20221311411725368IncomeTaxReturnFormforSalariedIndividuals.pdf)
-           - [Sales Tax Return Form](https://download1.fbr.gov.pk/Docs/202198174726316STGO12of2021-AnnexSTR.pdf)
-           - [Wealth Statement Form](https://download1.fbr.gov.pk/Docs/201212129391942FormWealthStatement.pdf)
-        """)
-        
-    elif "timeout" in str(error_type).lower():
-        st.error("Pakistan government servers may be experiencing high load or connectivity issues.")
-        st.info("Try again during off-peak hours (early morning or late evening Pakistan time).")
-        
-    elif "connection" in str(error_type).lower():
-        st.error("Connection issues with Pakistan government servers.")
-        st.info("This is a common issue that could be due to server maintenance or regional access restrictions.")
-        
-    else:
-        st.error(f"Error accessing Pakistan government resource: {error_type}")
-        
-    # Always provide the direct URL for manual access
-    if url:
-        st.markdown(f"""
-        **Try opening the link directly in your browser**:
-        <a href="{url}" target="_blank">
-        <button style="background-color:#4CAF50;color:white;padding:10px 24px;border:none;
-        border-radius:4px;cursor:pointer;">Open Link in Browser</button>
-        </a>
-        """, unsafe_allow_html=True)
-        
-    return None
-# Add this function to handle FBR-specific PDF fetching
-# Replace your fetch_fbr_pdf function with this improved version
-def fetch_fbr_pdf(url):
-    """Special handler for FBR website PDFs which often have SSL issues"""
-    try:
-        st.info("Using specialized FBR website handler...")
-        
-        # Create a custom session with improved SSL handling
-        session = requests.Session()
-        
-        # Add various retry and timeout strategies
-        retry = requests.packages.urllib3.util.retry.Retry(
-            total=5,
-            backoff_factor=0.5,
-            status_forcelist=[500, 502, 503, 504],
-        )
-        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-        
-        # Try multiple approaches
-        approaches = [
-            # Approach 1: Modified URL to use HTTP instead of HTTPS
-            {"url": url.replace("https://", "http://"), "verify": False, "timeout": 30},
-            # Approach 2: Original URL with no verification and custom headers
-            {"url": url, "verify": False, "timeout": 30, 
-             "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/89.0"}},
-            # Approach 3: Try alternate domain pattern (sometimes used by FBR)
-            {"url": url.replace("download1.fbr.gov.pk", "download.fbr.gov.pk"), "verify": False, "timeout": 30},
-        ]
-        
-        for i, approach in enumerate(approaches):
-            try:
-                headers = approach.get("headers", {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36"
-                })
-                
-                st.write(f"Trying approach {i+1} with URL: {approach['url']}")
-                r = session.get(
-                    approach["url"], 
-                    headers=headers,
-                    verify=approach["verify"],
-                    timeout=approach["timeout"]
-                )
-                
-                if r.status_code == 200:
-                    content_type = r.headers.get('Content-Type', '')
-                    st.write(f"Success with approach {i+1}! Content-Type: {content_type}")
-                    
-                    if 'application/pdf' in content_type or approach["url"].lower().endswith('.pdf'):
-                        return BytesIO(r.content)
-                    else:
-                        st.warning(f"Response is not a PDF! Content-Type: {content_type}")
-            except Exception as e:
-                st.write(f"Approach {i+1} failed: {str(e)}")
-                continue
-                
-        # If all approaches fail, provide alternate instructions
-        st.error("All automated attempts to fetch the PDF failed.")
-        st.markdown("""
-        ### Alternative download methods:
-        
-        1. **Try downloading directly**: 
-           - Open the link in your browser: [FBR Download Page](https://fbr.gov.pk/downloads)
-           - Search for your form and download it manually
-        
-        2. **Visit an FBR facilitation center** in your city
-        
-        3. **Common direct links** (may work in browser):
-           - [Income Tax Return Form](https://download1.fbr.gov.pk/Docs/20221311411725368IncomeTaxReturnFormforSalariedIndividuals.pdf)
-           - [Sales Tax Registration](https://download1.fbr.gov.pk/Docs/20198117833751FormSTR-1.pdf)
-        """, unsafe_allow_html=True)
-        
-        return None
-    except Exception as e:
-        st.error(f"FBR PDF fetch failed: {str(e)}")
-        return None
+
 # Fallback search method (limited, but free)
-# Improved fallback search method
 def fallback_search(query, country_code=""):
     try:
         # Format country code for search
         country_name = next((country.name for country in pycountry.countries if country.alpha_2.lower() == country_code.lower()), "")
-        
-        # For Pakistan, add special handling
-        if country_code.lower() == "pk" or country_name.lower() == "pakistan":
-            st.info("Using Pakistan-specific search method...")
-            
-            # List of common Pakistan tax form sources
-            pk_sources = [
-                {"name": "FBR Main Website", "url": "https://fbr.gov.pk"},
-                {"name": "FBR Forms", "url": "https://download1.fbr.gov.pk/Docs/"},
-                {"name": "Income Tax Ordinance", "url": "https://fbr.gov.pk/Income-Tax-Ordinances/132145/20210714192563217"}
-            ]
-            
-            # Show users direct links to common Pakistan tax resources
-            st.markdown("### Common Pakistan Tax Resources:")
-            for source in pk_sources:
-                st.markdown(f"- [{source['name']}]({source['url']})")
-                
-            # Try to construct a direct URL for common form types
-            if "income tax" in query.lower() or "itr" in query.lower():
-                st.info("Looking for Income Tax Return forms...")
-                direct_suggestions = [
-                    {"title": "Income Tax Return for Salaried Individuals", 
-                     "link": "https://download1.fbr.gov.pk/Docs/20221311411725368IncomeTaxReturnFormforSalariedIndividuals.pdf"},
-                    {"title": "Income Tax Return for Association of Persons (AOP)", 
-                     "link": "https://download1.fbr.gov.pk/Docs/20198117833692FormITR-AOP.pdf"},
-                    {"title": "Income Tax Return for Companies", 
-                     "link": "https://download1.fbr.gov.pk/Docs/2021815168381733CompanyReturn2021.pdf"}
-                ]
-                return direct_suggestions
-                
-            elif "sales tax" in query.lower():
-                st.info("Looking for Sales Tax Return forms...")
-                direct_suggestions = [
-                    {"title": "Sales Tax Return Form", 
-                     "link": "https://download1.fbr.gov.pk/Docs/202198174726316STGO12of2021-AnnexSTR.pdf"},
-                    {"title": "Sales Tax Registration Form", 
-                     "link": "https://download1.fbr.gov.pk/Docs/20198117833751FormSTR-1.pdf"}
-                ]
-                return direct_suggestions
         
         # Use a different free API or direct scraping approach
         search_query = quote_plus(f"{query} {country_name} tax form pdf")
@@ -325,50 +161,18 @@ def analyze_search_results(results, query, country):
         return results, None
 
 # Try to download PDF
-# Update the fetch_pdf function with improved error handling
 def fetch_pdf(url):
     try:
-        # First determine if this is an FBR URL - use specialized handler
-        if any(domain in url.lower() for domain in ["fbr.gov.pk", "download1.fbr.gov.pk", "download.fbr.gov.pk"]):
-            st.info("Detected FBR website URL - using specialized handler")
-            fbr_result = fetch_fbr_pdf(url)
-            if fbr_result:
-                return fbr_result
-            # If the specialized handler failed, don't attempt with standard handler
-            else:
-                # Show Pakistan-specific fallback options
-                handle_pk_gov_errors("SSL Certificate Error", url)
-                return None
-                
-        # For non-FBR URLs, use the standard approach
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         st.write(f"Attempting to download PDF from: {url}")
-        
-        # Create a session with retry capabilities
-        session = requests.Session()
-        retry_strategy = requests.packages.urllib3.util.retry.Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        session.mount('https://', requests.adapters.HTTPAdapter(max_retries=retry_strategy))
-        session.mount('http://', requests.adapters.HTTPAdapter(max_retries=retry_strategy))
-        
-        try:
-            # First try with verification enabled (safer)
-            r = session.get(url, headers=headers, timeout=20)
-        except requests.exceptions.SSLError:
-            st.warning("SSL certificate validation failed. Trying alternate method...")
-            # If SSL verification fails, try without verification
-            r = session.get(url, headers=headers, timeout=20, verify=False)
-            
+        r = requests.get(url, headers=headers, timeout=15)
         st.write(f"Response status code: {r.status_code}")
         st.write(f"Content-Type: {r.headers.get('Content-Type', 'Not specified')}")
         
         if r.status_code == 200:
-            if 'application/pdf' in r.headers.get('Content-Type', '') or url.lower().endswith('.pdf'):
+            if 'application/pdf' in r.headers.get('Content-Type', ''):
                 st.success("Successfully retrieved PDF!")
                 return BytesIO(r.content)
             else:
@@ -382,25 +186,9 @@ def fetch_pdf(url):
                     st.warning("No PDF links found on the page")
         else:
             st.error(f"Failed to retrieve URL: {r.status_code}")
-            
-        # Provide a better error message for the user
-        if "fbr.gov.pk" in url.lower():
-            handle_pk_gov_errors("Connection Error", url)
-        else:
-            st.error("Unable to retrieve the PDF. This could be due to:")
-            st.markdown("""
-            1. The server might be temporarily down
-            2. The PDF might require authentication
-            3. The URL might be incorrect or outdated
-            """)
-            
         return None
     except Exception as e:
         st.error(f"Error fetching PDF: {str(e)}")
-        
-        # Add additional handling for common FBR website issues
-        if "fbr.gov.pk" in url:
-            handle_pk_gov_errors(str(e), url)
         return None
 
 # Scrape .pdf links from HTML page
@@ -573,41 +361,7 @@ def fill_pdf_form(file_bytesio, field_values):
     except Exception as e:
         st.error(f"Error filling form: {str(e)}")
         return None
-# Add this code to your Streamlit app's Tab 2 (Search Forms) section
-# Place it right after the search results display, before displaying the PDF
 
-# Manual upload option for when automatic fetching fails
-st.markdown("### 🔄 Can't fetch the form automatically?")
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    manual_upload = st.file_uploader("Upload the PDF form directly:", type=["pdf"])
-    
-    if manual_upload:
-        try:
-            # Process the uploaded PDF
-            pdf_bytes = BytesIO(manual_upload.getvalue())
-            st.session_state.pdf_bytes = pdf_bytes
-            st.session_state.form_fields = extract_form_fields(pdf_bytes)
-            st.success(f"Successfully loaded {manual_upload.name}!")
-            
-            # Add to history
-            add_to_history("Pakistan", "Manually uploaded form", None)
-        except Exception as e:
-            st.error(f"Error processing uploaded PDF: {str(e)}")
-
-with col2:
-    st.info("""
-    **Experiencing issues with automatic form downloads?**
-    
-    Many Pakistani government websites have technical issues that can prevent automatic downloads.
-    
-    If you already have the tax form saved on your computer, you can upload it directly.
-    
-    You can also try downloading forms directly from:
-    - [FBR Downloads Page](https://fbr.gov.pk/downloads)
-    - [IRIS Portal](https://iris.fbr.gov.pk/)
-    """)
 # Add to search history
 def add_to_history(country, query, pdf_url=None):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")

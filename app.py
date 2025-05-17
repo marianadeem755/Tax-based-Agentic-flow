@@ -16,7 +16,7 @@ import tempfile
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 # Suppress only the specific InsecureRequestWarning when needed
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 # Load environment variables
 load_dotenv()
 

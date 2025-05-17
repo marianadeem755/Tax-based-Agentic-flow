@@ -130,13 +130,16 @@ def handle_pk_gov_errors(error_type, url=""):
         
     return None
 # Add this function to handle FBR-specific PDF fetching
+# Replace your fetch_fbr_pdf function with this improved version
 def fetch_fbr_pdf(url):
     """Special handler for FBR website PDFs which often have SSL issues"""
     try:
         st.info("Using specialized FBR website handler...")
         
-        # Create a session with retry logic
+        # Create a custom session with improved SSL handling
         session = requests.Session()
+        
+        # Add various retry and timeout strategies
         retry = requests.packages.urllib3.util.retry.Retry(
             total=5,
             backoff_factor=0.5,
@@ -148,15 +151,13 @@ def fetch_fbr_pdf(url):
         
         # Try multiple approaches
         approaches = [
-            # Approach 1: Original URL with no verification
-            {"url": url, "verify": False, "timeout": 20},
-            # Approach 2: HTTP instead of HTTPS
-            {"url": url.replace("https://", "http://"), "verify": False, "timeout": 20},
-            # Approach 3: Try alternate domain pattern
-            {"url": url.replace("download1.fbr.gov.pk", "download.fbr.gov.pk"), "verify": False, "timeout": 20},
-            # Approach 4: Use different user agent
-            {"url": url, "verify": False, "timeout": 20, 
+            # Approach 1: Modified URL to use HTTP instead of HTTPS
+            {"url": url.replace("https://", "http://"), "verify": False, "timeout": 30},
+            # Approach 2: Original URL with no verification and custom headers
+            {"url": url, "verify": False, "timeout": 30, 
              "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/89.0"}},
+            # Approach 3: Try alternate domain pattern (sometimes used by FBR)
+            {"url": url.replace("download1.fbr.gov.pk", "download.fbr.gov.pk"), "verify": False, "timeout": 30},
         ]
         
         for i, approach in enumerate(approaches):
@@ -179,10 +180,28 @@ def fetch_fbr_pdf(url):
                     
                     if 'application/pdf' in content_type or approach["url"].lower().endswith('.pdf'):
                         return BytesIO(r.content)
+                    else:
+                        st.warning(f"Response is not a PDF! Content-Type: {content_type}")
             except Exception as e:
                 st.write(f"Approach {i+1} failed: {str(e)}")
                 continue
                 
+        # If all approaches fail, provide alternate instructions
+        st.error("All automated attempts to fetch the PDF failed.")
+        st.markdown("""
+        ### Alternative download methods:
+        
+        1. **Try downloading directly**: 
+           - Open the link in your browser: [FBR Download Page](https://fbr.gov.pk/downloads)
+           - Search for your form and download it manually
+        
+        2. **Visit an FBR facilitation center** in your city
+        
+        3. **Common direct links** (may work in browser):
+           - [Income Tax Return Form](https://download1.fbr.gov.pk/Docs/20221311411725368IncomeTaxReturnFormforSalariedIndividuals.pdf)
+           - [Sales Tax Registration](https://download1.fbr.gov.pk/Docs/20198117833751FormSTR-1.pdf)
+        """, unsafe_allow_html=True)
+        
         return None
     except Exception as e:
         st.error(f"FBR PDF fetch failed: {str(e)}")

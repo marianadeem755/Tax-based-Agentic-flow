@@ -1,7 +1,8 @@
 streamlit
-requests
+request
 python-dotenv
 beautifulsoup4
 PyMuPDF
 pycountry
 groq
+urllib3

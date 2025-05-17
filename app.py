@@ -325,17 +325,22 @@ def analyze_search_results(results, query, country):
         return results, None
 
 # Try to download PDF
-# Updated fetch_pdf function with SSL error handling
+# Update the fetch_pdf function with improved error handling
 def fetch_pdf(url):
     try:
-        # For FBR domains, use the specialized handler
-        if "fbr.gov.pk" in url:
+        # First determine if this is an FBR URL - use specialized handler
+        if any(domain in url.lower() for domain in ["fbr.gov.pk", "download1.fbr.gov.pk", "download.fbr.gov.pk"]):
+            st.info("Detected FBR website URL - using specialized handler")
             fbr_result = fetch_fbr_pdf(url)
             if fbr_result:
                 return fbr_result
+            # If the specialized handler failed, don't attempt with standard handler
             else:
-                st.warning("Specialized FBR handler failed. Falling back to standard method.")
+                # Show Pakistan-specific fallback options
+                handle_pk_gov_errors("SSL Certificate Error", url)
+                return None
                 
+        # For non-FBR URLs, use the standard approach
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
@@ -353,11 +358,11 @@ def fetch_pdf(url):
         
         try:
             # First try with verification enabled (safer)
-            r = session.get(url, headers=headers, timeout=15)
+            r = session.get(url, headers=headers, timeout=20)
         except requests.exceptions.SSLError:
             st.warning("SSL certificate validation failed. Trying alternate method...")
             # If SSL verification fails, try without verification
-            r = session.get(url, headers=headers, timeout=15, verify=False)
+            r = session.get(url, headers=headers, timeout=20, verify=False)
             
         st.write(f"Response status code: {r.status_code}")
         st.write(f"Content-Type: {r.headers.get('Content-Type', 'Not specified')}")
@@ -379,29 +384,23 @@ def fetch_pdf(url):
             st.error(f"Failed to retrieve URL: {r.status_code}")
             
         # Provide a better error message for the user
-        st.error("Unable to retrieve the PDF. This could be due to:")
-        st.markdown("""
-        1. The government server might be temporarily down
-        2. The PDF might require authentication
-        3. The URL might be incorrect or outdated
-        
-        Try accessing the document directly from the [FBR website](https://fbr.gov.pk)
-        """)
+        if "fbr.gov.pk" in url.lower():
+            handle_pk_gov_errors("Connection Error", url)
+        else:
+            st.error("Unable to retrieve the PDF. This could be due to:")
+            st.markdown("""
+            1. The server might be temporarily down
+            2. The PDF might require authentication
+            3. The URL might be incorrect or outdated
+            """)
             
         return None
     except Exception as e:
         st.error(f"Error fetching PDF: {str(e)}")
-        return None
-    except Exception as e:
-        st.error(f"Error fetching PDF: {str(e)}")
+        
         # Add additional handling for common FBR website issues
-        if "download1.fbr.gov.pk" in url:
-            st.info("The FBR download server appears to be having issues. Here are alternative options:")
-            st.markdown("""
-            1. Try accessing the form directly from the FBR website: [FBR Forms](https://fbr.gov.pk)
-            2. The direct link may work in your browser even if our app can't access it: [Open in browser]({url})
-            3. Try again later as government servers may experience temporary issues
-            """)
+        if "fbr.gov.pk" in url:
+            handle_pk_gov_errors(str(e), url)
         return None
 
 # Scrape .pdf links from HTML page
@@ -574,7 +573,41 @@ def fill_pdf_form(file_bytesio, field_values):
     except Exception as e:
         st.error(f"Error filling form: {str(e)}")
         return None
+# Add this code to your Streamlit app's Tab 2 (Search Forms) section
+# Place it right after the search results display, before displaying the PDF
 
+# Manual upload option for when automatic fetching fails
+st.markdown("### 🔄 Can't fetch the form automatically?")
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    manual_upload = st.file_uploader("Upload the PDF form directly:", type=["pdf"])
+    
+    if manual_upload:
+        try:
+            # Process the uploaded PDF
+            pdf_bytes = BytesIO(manual_upload.getvalue())
+            st.session_state.pdf_bytes = pdf_bytes
+            st.session_state.form_fields = extract_form_fields(pdf_bytes)
+            st.success(f"Successfully loaded {manual_upload.name}!")
+            
+            # Add to history
+            add_to_history("Pakistan", "Manually uploaded form", None)
+        except Exception as e:
+            st.error(f"Error processing uploaded PDF: {str(e)}")
+
+with col2:
+    st.info("""
+    **Experiencing issues with automatic form downloads?**
+    
+    Many Pakistani government websites have technical issues that can prevent automatic downloads.
+    
+    If you already have the tax form saved on your computer, you can upload it directly.
+    
+    You can also try downloading forms directly from:
+    - [FBR Downloads Page](https://fbr.gov.pk/downloads)
+    - [IRIS Portal](https://iris.fbr.gov.pk/)
+    """)
 # Add to search history
 def add_to_history(country, query, pdf_url=None):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")

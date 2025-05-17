@@ -5,4 +5,4 @@ beautifulsoup4
 PyMuPDF
 pycountry
 groq
-urllib3
+urllib

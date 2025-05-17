@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
 import fitz  # PyMuPDF
 import pycountry  # for country list
-from groq import Groq
 import tempfile
 import urllib3
 import warnings
@@ -31,8 +30,15 @@ This is safe for public documents but should not be used for sensitive informati
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Using Groq as free LLM API
 
-# Initialize Groq client (free alternative to OpenAI)
-groq_client = Groq(api_key=GROQ_API_KEY)
+# Initialize Groq client only if API key is available
+groq_client = None
+if GROQ_API_KEY:
+    try:
+        from groq import Groq
+        groq_client = Groq(api_key=GROQ_API_KEY)
+    except Exception as e:
+        st.warning(f"Failed to initialize Groq client: {str(e)}")
+        st.info("Some advanced features requiring LLM will be limited.")
 
 # Constants
 COUNTRIES = sorted([country.name for country in pycountry.countries])

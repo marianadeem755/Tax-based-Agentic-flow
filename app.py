@@ -27,11 +27,6 @@ try:
     import mammoth
 except ImportError:
     mammoth = None
-    
-try:
-    from docx import Document
-except ImportError:
-    Document = None
 
 import re
 # ─────────────────────────────────────────
@@ -1196,4 +1191,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

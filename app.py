@@ -1,10 +1,12 @@
+
 # =========================================
 # 📋 Pakistan Tax Form Finder - Enhanced Version
 # =========================================
 import streamlit as st
 import os, json, time, base64, tempfile
 from io import BytesIO
-import requests, fitz, pycountry
+import requests
+import pycountry
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
 from dotenv import load_dotenv
@@ -12,10 +14,26 @@ from groq import Groq
 import pandas as pd
 import openpyxl
 from openpyxl import load_workbook
-import mammoth
-from docx import Document
-import re
 
+# Fixed PyMuPDF import
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    st.error("PyMuPDF not available. PDF features will be limited.")
+    fitz = None
+
+# Document processing imports with fallbacks
+try:
+    import mammoth
+except ImportError:
+    mammoth = None
+    
+try:
+    from docx import Document
+except ImportError:
+    Document = None
+
+import re
 # ─────────────────────────────────────────
 # 🔐 Load API keys
 # ─────────────────────────────────────────
@@ -1178,3 +1196,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

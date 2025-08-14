@@ -1,8 +1,31 @@
-streamlit
-requests
-python-dotenv
-beautifulsoup4
-PyMuPDF
-pycountry
-groq
-urllib3
+# Core Streamlit Framework
+streamlit>=1.28.0
+
+# HTTP Requests and Web Scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+urllib3>=2.0.0
+
+# PDF Processing
+PyMuPDF>=1.23.0
+fitz>=0.0.1.dev2
+
+# Country Data
+pycountry>=22.3.0
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# AI/LLM Integration
+groq>=0.4.0
+
+# Data Processing (Optional - for enhanced features)
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Additional Utilities
+python-dateutil>=2.8.0
+urllib3>=2.0.0
+
+# For better error handling and logging
+certifi>=2023.0.0
